@@ -1,0 +1,14 @@
+name
+lastname
+age
+document
+date
+address
+phone
+email
+sex
+hc
+up
+left
+down
+right
