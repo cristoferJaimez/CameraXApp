@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -34,13 +35,19 @@ import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
 import androidx.camera.video.VideoRecordEvent
+import androidx.core.content.FileProvider
 import androidx.core.content.PermissionChecker
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.support.common.FileUtil
 import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
+import java.io.File
+import java.io.FileInputStream
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.MappedByteBuffer
+import java.nio.channels.FileChannel
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -54,7 +61,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var interpreter: Interpreter
     private lateinit var labels: List<String>
 
-   //private var videoCapture: VideoCapture<Recorder>? = null
+    private lateinit var tflite: Interpreter
+    private lateinit var inputImageBuffer: ByteBuffer
+    private lateinit var outputBuffer: TensorBuffer
+
+    //private var outputSize: Int = 0
+    //private var videoCapture: VideoCapture<Recorder>? = null
     //private var recording: Recording? = null
 
     private lateinit var cameraExecutor: ExecutorService
@@ -69,20 +81,15 @@ class MainActivity : AppCompatActivity() {
             window.statusBarColor = Color.BLACK
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.insetsController?.hide(WindowInsets.Type.navigationBars())
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-        }
+
 
         //cargar modelo
-        val model = FileUtil.loadMappedFile(this, "model.tflite")
-        val options = Interpreter.Options()
-        interpreter = Interpreter(model, options)
+        //val model = FileUtil.loadMappedFile(this, "model.tflite")
+        //val options = Interpreter.Options()
+        //interpreter = Interpreter(model, options)
 
         // carga el archivo de etiquetas
-        labels = FileUtil.loadLabels(this, "labels.txt")
+        //labels = FileUtil.loadLabels(this, "labels.txt")
 
        
         // Request camera permissions
@@ -98,6 +105,15 @@ class MainActivity : AppCompatActivity() {
         //viewBinding.videoCaptureButton.setOnClickListener { captureVideo() }
 
         cameraExecutor = Executors.newSingleThreadExecutor()
+
+        tflite = Interpreter(loadModelFile())
+
+
+        inputImageBuffer = ByteBuffer.allocateDirect(1 * 256 * 320 * 3 * 4)
+        inputImageBuffer.order(ByteOrder.nativeOrder())
+
+        outputBuffer = TensorBuffer.createFixedSize(intArrayOf(1, 13), DataType.FLOAT32)
+
     }
     override fun onRequestPermissionsResult(
         requestCode: Int, permissions: Array<String>, grantResults:
@@ -119,6 +135,7 @@ class MainActivity : AppCompatActivity() {
     private fun takePhoto() {
         // Get a stable reference of the modifiable image capture use case
         val imageCapture = imageCapture ?: return
+
 
         // Create time stamped name and MediaStore entry.
         val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US)
@@ -148,11 +165,31 @@ class MainActivity : AppCompatActivity() {
                     Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
                 }
 
-                override fun
-                        onImageSaved(output: ImageCapture.OutputFileResults){
-                    val msg = "Photo capture succeeded: ${output.savedUri}"
+                override fun onImageSaved(output: ImageCapture.OutputFileResults){
+
+                    val msg = "Photo capture succeeded: ${output.savedUri!!.path}"
                     Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
                     Log.d(TAG, msg)
+
+
+                    val imageUri = output.savedUri
+                    val projection = arrayOf(MediaStore.Images.Media.DATA)
+                    val cursor = contentResolver.query(imageUri!!, projection, null, null, null)
+                    cursor?.moveToFirst()
+                    val imagePath = cursor?.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA))
+                    val imageFile = File(imagePath)
+                    val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
+                    recognizeImage(bitmap)
+
+
+                    //val imageFile = File(output.savedUri!!.path.)
+
+                    //val imageUri = FileProvider.getUriForFile(this@MainActivity, "${BuildConfig.APPLICATION_ID}.fileprovider", imageFile)
+                    //Log.d("VER_", ""+imageUri)
+                    //val bitmap = BitmapFactory.decodeStream(contentResolver.openInputStream(imageUri))
+                    //val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
+                    //recognizeImage(bitmap)
+
                 }
             }
         )
@@ -161,12 +198,12 @@ class MainActivity : AppCompatActivity() {
     //por el momento video no me interesa
     private fun captureVideo() {}
 
-    // iniciar camara vista previa
-    /*
+
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
 
         cameraProviderFuture.addListener({
+
             // Used to bind the lifecycle of cameras to the lifecycle owner
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
 
@@ -180,74 +217,20 @@ class MainActivity : AppCompatActivity() {
             imageCapture = ImageCapture.Builder()
                 .build()
 
-            // Select back camera as a default
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-
-            val thread = Thread{
-                Log.d("Camera", ""+ imageCapture)
-            }
-            thread.start()
-
+            val cameraSelector = CameraSelector.Builder()
+                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                .build()
 
             try {
-                // Unbind use cases before rebinding
                 cameraProvider.unbindAll()
 
-                // Bind use cases to camera
                 cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview, imageCapture)
+                    this, cameraSelector, preview, imageCapture
+                )
 
-            } catch(exc: Exception) {
-                Log.e(TAG, "Use case binding failed", exc)
+            } catch (exc: Exception) {
+                Toast.makeText(this, "Unable to start camera", Toast.LENGTH_SHORT).show()
             }
-
-        }, ContextCompat.getMainExecutor(this))
-    }
-*/
-    private fun startCamera() {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-
-        cameraProviderFuture.addListener({
-
-            // Used to bind the lifecycle of cameras to the lifecycle owner
-            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
-
-            // Preview
-            val preview = Preview.Builder()
-                .build()
-                .also {
-                    it.setSurfaceProvider(viewBinding.viewFinder.surfaceProvider)
-                }
-            val executor = Executors.newSingleThreadExecutor()
-
-            val imageAnalysis = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-                .also {
-                    it.setAnalyzer(executor, object : ImageAnalysis.Analyzer {
-                        override fun analyze(image: ImageProxy) {
-                           //imagen
-
-                        }
-                    })
-                }
-
-            // Select back camera as a default
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-            try {
-                // Unbind use cases before rebinding
-                cameraProvider.unbindAll()
-
-                // Bind use cases to camera
-                cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview, imageAnalysis)
-
-            } catch(exc: Exception) {
-                Log.e(TAG, "Use case binding failed", exc)
-            }
-
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -284,6 +267,58 @@ class MainActivity : AppCompatActivity() {
     }
 
     //imagen a bitmap
+
+    private fun loadModelFile(): MappedByteBuffer {
+        val assetFileDescriptor = assets.openFd("model.tflite")
+        val inputStream = FileInputStream(assetFileDescriptor.fileDescriptor)
+        val fileChannel = inputStream.channel
+        val startOffset = assetFileDescriptor.startOffset
+        val declaredLength = assetFileDescriptor.declaredLength
+
+        // Create an Interpreter from the model file
+        val model = Interpreter(fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength))
+
+        // Print information about the input tensor of the model
+        val inputTensorIndex = 0
+        val inputTensor = model.getInputTensor(inputTensorIndex)
+        val inputTensorName = inputTensor.name()
+        val inputTensorShape = inputTensor.shape()
+        val inputTensorDataType = inputTensor.dataType()
+        println("Model information:")
+        println("  Input tensor name: $inputTensorName")
+        println("  Input tensor shape: ${inputTensorShape.joinToString()}")
+        println("  Input tensor data type: $inputTensorDataType")
+
+
+
+        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
+    }
+
+    private fun recognizeImage(bitmap: Bitmap) {
+        // Redimensionar el bitmap a 640x640
+        val resizedBitmap = Bitmap.createScaledBitmap(bitmap, 256, 320 , true)
+
+        val tensorImage = TensorImage.fromBitmap(resizedBitmap)
+        val imageBuffer = tensorImage.buffer
+
+
+        // Crear un buffer para los valores de píxel
+        val pixelBuffer = ByteBuffer.allocateDirect(4 * imageBuffer.capacity())  // 4 bytes por valor float
+        pixelBuffer.order(ByteOrder.nativeOrder())  // Usar orden de bytes nativo
+        val floatBuffer = pixelBuffer.asFloatBuffer()
+
+        // Copiar los valores de imageBuffer a floatBuffer
+        imageBuffer.rewind()
+        while (imageBuffer.hasRemaining()) {
+            floatBuffer.put(imageBuffer.get().toFloat() / 255.0f)  // Normalizar a valores entre 0 y 1
+        }
+
+
+        tflite.run(pixelBuffer, outputBuffer.buffer.rewind())
+        val result = outputBuffer.floatArray
+        Log.d("MODELPROCESS", ""+result)
+
+    }
 
 
 
