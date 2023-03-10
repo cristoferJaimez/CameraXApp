@@ -39,6 +39,7 @@ import androidx.core.content.FileProvider
 import androidx.core.content.PermissionChecker
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.Tensor
 import org.tensorflow.lite.support.common.FileUtil
 import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
@@ -46,6 +47,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.FloatBuffer
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.text.SimpleDateFormat
@@ -84,12 +86,12 @@ class MainActivity : AppCompatActivity() {
 
 
         //cargar modelo
-        //val model = FileUtil.loadMappedFile(this, "model.tflite")
-        //val options = Interpreter.Options()
-        //interpreter = Interpreter(model, options)
+        val model = FileUtil.loadMappedFile(this, "model.tflite")
+        val options = Interpreter.Options()
+        interpreter = Interpreter(model, options)
 
         // carga el archivo de etiquetas
-        //labels = FileUtil.loadLabels(this, "labels.txt")
+        labels = FileUtil.loadLabels(this, "labels.txt")
 
        
         // Request camera permissions
@@ -112,7 +114,7 @@ class MainActivity : AppCompatActivity() {
         inputImageBuffer = ByteBuffer.allocateDirect(1 * 256 * 320 * 3 * 4)
         inputImageBuffer.order(ByteOrder.nativeOrder())
 
-        outputBuffer = TensorBuffer.createFixedSize(intArrayOf(1, 13), DataType.FLOAT32)
+        outputBuffer = TensorBuffer.createFixedSize(intArrayOf(1,5040 ,21), DataType.FLOAT32)
 
     }
     override fun onRequestPermissionsResult(
@@ -181,14 +183,10 @@ class MainActivity : AppCompatActivity() {
                     val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
                     recognizeImage(bitmap)
 
-
-                    //val imageFile = File(output.savedUri!!.path.)
-
-                    //val imageUri = FileProvider.getUriForFile(this@MainActivity, "${BuildConfig.APPLICATION_ID}.fileprovider", imageFile)
-                    //Log.d("VER_", ""+imageUri)
-                    //val bitmap = BitmapFactory.decodeStream(contentResolver.openInputStream(imageUri))
-                    //val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
-                    //recognizeImage(bitmap)
+                    //val modelByteBuffer = loadModelFile()
+                    //val model = Interpreter(modelByteBuffer)
+                    //val inputData = FloatArray(1 * 256* 320* 3)
+                    //val outputData = runInference(model, inputData)
 
                 }
             }
@@ -294,6 +292,27 @@ class MainActivity : AppCompatActivity() {
         return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
     }
 
+    private fun runInference(model: Interpreter, inputData: FloatArray): FloatArray {
+        // Create an output tensor
+        val outputTensorIndex = 0
+        val outputTensor = model.getOutputTensor(outputTensorIndex)
+        val outputShape = outputTensor.shape()
+        val outputDataType = outputTensor.dataType()
+        println("  Output tensor shape: ${outputShape.joinToString()}")
+        println("  Output tensor data type: $outputDataType")
+
+        // Run inference on the input data
+        val outputBuffer = FloatBuffer.allocate(outputTensor.shape().size)
+        model.run(inputData, outputBuffer)
+
+        // Convert the output buffer to a float array
+        val outputData = FloatArray(outputTensor.shape().size)
+        outputBuffer.rewind()
+        outputBuffer.get(outputData)
+
+        return outputData
+    }
+
     private fun recognizeImage(bitmap: Bitmap) {
         // Redimensionar el bitmap a 640x640
         val resizedBitmap = Bitmap.createScaledBitmap(bitmap, 256, 320 , true)
@@ -312,11 +331,20 @@ class MainActivity : AppCompatActivity() {
         while (imageBuffer.hasRemaining()) {
             floatBuffer.put(imageBuffer.get().toFloat() / 255.0f)  // Normalizar a valores entre 0 y 1
         }
+        //val outputTensorShape = intArrayOf(1, 5040, 21)
+        //val outputTensor = Tensor.create(DataType.FLOAT32, outputTensorShape)
 
 
+        // Ejecutar el modelo
+        //val outputBuffers = arrayOf(outputTensor.buffer)
+
+
+
+       // interpreter.run(inputBuffer, outputBuffer)
+       // var result =  tflite.run(pixelBuffer, null)
         tflite.run(pixelBuffer, outputBuffer.buffer.rewind())
         val result = outputBuffer.floatArray
-        Log.d("MODELPROCESS", ""+result)
+        Log.d("MODELPROCESS", ""+result.toString())
 
     }
 
