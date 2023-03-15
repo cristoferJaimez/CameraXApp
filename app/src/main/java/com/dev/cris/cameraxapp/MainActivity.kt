@@ -2,18 +2,14 @@ package com.dev.cris.cameraxapp
 import android.Manifest
 import android.content.ContentValues
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Color
-import android.net.Uri
+import android.graphics.*
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.Handler
 import android.provider.MediaStore
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.ImageCapture
-import androidx.camera.video.Recorder
-import androidx.camera.video.Recording
-import androidx.camera.video.VideoCapture
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.dev.cris.cameraxapp.databinding.ActivityMainBinding
@@ -24,34 +20,21 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.core.Preview
 import androidx.camera.core.CameraSelector
 import android.util.Log
-import android.view.View
-import android.view.WindowInsets
 import android.view.WindowManager
-import androidx.camera.core.ImageAnalysis
+import android.widget.ImageView
 import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.ImageProxy
-import androidx.camera.video.FallbackStrategy
-import androidx.camera.video.MediaStoreOutputOptions
-import androidx.camera.video.Quality
-import androidx.camera.video.QualitySelector
-import androidx.camera.video.VideoRecordEvent
-import androidx.core.content.FileProvider
-import androidx.core.content.PermissionChecker
-import org.tensorflow.lite.DataType
-import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.Tensor
-import org.tensorflow.lite.support.common.FileUtil
-import org.tensorflow.lite.support.image.TensorImage
-import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
+//import org.tensorflow.lite.DataType
+//import org.tensorflow.lite.Interpreter
+//import org.tensorflow.lite.support.common.FileUtil
+//import org.tensorflow.lite.support.image.TensorImage
+//import org.tensorflow.lite.support.tensorbuffer.TensorBuffer
 import java.io.File
-import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.FloatBuffer
-import java.nio.MappedByteBuffer
-import java.nio.channels.FileChannel
 import java.text.SimpleDateFormat
 import java.util.Locale
+
 
 typealias LumaListener = (luma: Double) -> Unit
 
@@ -60,12 +43,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var viewBinding: ActivityMainBinding
 
     private var imageCapture: ImageCapture? = null
-    private lateinit var interpreter: Interpreter
+    //private lateinit var interpreter: Interpreter
     private lateinit var labels: List<String>
 
-    private lateinit var tflite: Interpreter
+    //private lateinit var tflite: Interpreter
     private lateinit var inputImageBuffer: ByteBuffer
-    private lateinit var outputBuffer: TensorBuffer
+    //private lateinit var outputBuffer: TensorBuffer
+
+    private var imageView: ImageView? = null // Declarar una variable para la vista ImageView
 
     //private var outputSize: Int = 0
     //private var videoCapture: VideoCapture<Recorder>? = null
@@ -73,10 +58,15 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var cameraExecutor: ExecutorService
 
+    private lateinit var pyTorchModel: PyTorchImageSegmentation
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(viewBinding.root)
+        //setContentView(R.layout.activity_main)
+        imageView = findViewById(R.id.imageView)
+
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
@@ -86,14 +76,18 @@ class MainActivity : AppCompatActivity() {
 
 
         //cargar modelo
-        val model = FileUtil.loadMappedFile(this, "model.tflite")
-        val options = Interpreter.Options()
-        interpreter = Interpreter(model, options)
+        //val model = FileUtil.loadMappedFile(this, "model.tflite")
+        //val options = Interpreter.Options()
+        //interpreter = Interpreter(model, options)
 
         // carga el archivo de etiquetas
-        labels = FileUtil.loadLabels(this, "labels.txt")
+        //labels = FileUtil.loadLabels(this, "labels.txt")
 
-       
+       //classifier pyTorch
+        pyTorchModel = PyTorchImageSegmentation()
+        pyTorchModel.assetFilePath(this,"model.torchscript.pt")
+        //pyTorchModel.loadModel()
+
         // Request camera permissions
         if (allPermissionsGranted()) {
             startCamera()
@@ -108,13 +102,13 @@ class MainActivity : AppCompatActivity() {
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
-        tflite = Interpreter(loadModelFile())
+        //tflite = Interpreter(loadModelFile())
 
 
         inputImageBuffer = ByteBuffer.allocateDirect(1 * 256 * 320 * 3 * 4)
         inputImageBuffer.order(ByteOrder.nativeOrder())
 
-        outputBuffer = TensorBuffer.createFixedSize(intArrayOf(1,5040 ,21), DataType.FLOAT32)
+        //outputBuffer = TensorBuffer.createFixedSize(intArrayOf(1,5040 ,21), DataType.FLOAT32)
 
     }
     override fun onRequestPermissionsResult(
@@ -172,6 +166,7 @@ class MainActivity : AppCompatActivity() {
                     val msg = "Photo capture succeeded: ${output.savedUri!!.path}"
                     Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
                     Log.d(TAG, msg)
+                    // Muestra la imagen resultante en una vista de imagen
 
 
                     val imageUri = output.savedUri
@@ -181,7 +176,56 @@ class MainActivity : AppCompatActivity() {
                     val imagePath = cursor?.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA))
                     val imageFile = File(imagePath)
                     val bitmap = BitmapFactory.decodeFile(imageFile.absolutePath)
-                    recognizeImage(bitmap)
+
+
+                    val output = pyTorchModel.inference(bitmap)
+
+                    // Imprimir los resultados de la inferencia
+                    Log.d("ModelOutPut", ""+output)
+                    // Crear un objeto Paint para dibujar las cajas de detección
+                    // Obtener el tamaño de la imagen original
+                    val imageWidth = bitmap.width.toFloat()
+                    val imageHeight = bitmap.height.toFloat()
+
+                    val paint = Paint()
+                    paint.color = Color.BLACK
+                    paint.style = Paint.Style.STROKE
+                    paint.strokeWidth = 4f
+
+                    val copy = Bitmap.createBitmap(imageWidth.toInt(), imageHeight.toInt(),  bitmap.config)
+                    val canvas = Canvas(copy)
+
+                    // Dibujar la imagen original en el canvas
+                    canvas.drawBitmap(copy, 0f, 0f, null)
+
+
+                    for (detection in output) {
+                        // Obtener las coordenadas normalizadas de la detección
+                        val left = detection.left
+                        val top = detection.top
+                        val right = detection.right
+                        val bottom = detection.bottom
+
+                        // Convertir las coordenadas normalizadas a coordenadas en píxeles
+                        val rect = RectF(
+                            left * imageWidth,
+                            top * imageHeight,
+                            right * imageWidth,
+                            bottom * imageHeight
+                        )
+
+                        // Dibujar el rectángulo en el canvas
+                        canvas.drawRect(rect, paint)
+                    }
+
+                    // Mostrar el bitmap resultante en un ImageView
+
+
+                    imageView?.setImageBitmap(copy)
+                    Handler().postDelayed({
+                        imageView?.setImageBitmap(null)
+                    }, 3000)
+                    //recognizeImage(bitmap)
 
                     //val modelByteBuffer = loadModelFile()
                     //val model = Interpreter(modelByteBuffer)
@@ -266,6 +310,7 @@ class MainActivity : AppCompatActivity() {
 
     //imagen a bitmap
 
+    /*
     private fun loadModelFile(): MappedByteBuffer {
         val assetFileDescriptor = assets.openFd("model.tflite")
         val inputStream = FileInputStream(assetFileDescriptor.fileDescriptor)
@@ -274,7 +319,7 @@ class MainActivity : AppCompatActivity() {
         val declaredLength = assetFileDescriptor.declaredLength
 
         // Create an Interpreter from the model file
-        val model = Interpreter(fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength))
+        //val model = Interpreter(fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength))
 
         // Print information about the input tensor of the model
         val inputTensorIndex = 0
@@ -331,23 +376,84 @@ class MainActivity : AppCompatActivity() {
         while (imageBuffer.hasRemaining()) {
             floatBuffer.put(imageBuffer.get().toFloat() / 255.0f)  // Normalizar a valores entre 0 y 1
         }
-        //val outputTensorShape = intArrayOf(1, 5040, 21)
-        //val outputTensor = Tensor.create(DataType.FLOAT32, outputTensorShape)
 
+        // Carga las etiquetas desde el archivo labels.txt
+        val labels = assets.open("labels.txt").bufferedReader().readLines()
 
-        // Ejecutar el modelo
-        //val outputBuffers = arrayOf(outputTensor.buffer)
-
-
-
-       // interpreter.run(inputBuffer, outputBuffer)
-       // var result =  tflite.run(pixelBuffer, null)
+        // Ejecuta la inferencia y obtiene los resultados
         tflite.run(pixelBuffer, outputBuffer.buffer.rewind())
         val result = outputBuffer.floatArray
-        Log.d("MODELPROCESS", ""+result.toString())
+
+
+        // Obtiene la forma de la salida del modelo
+        val outputShape = tflite.getOutputTensor(0).shape()
+
+        // Obtiene el número de objetos detectados
+        val numDetections = outputShape[1].toInt()
+
+        // Obtiene la altura y anchura de la imagen de entrada
+        val inputHeight = 256
+        val inputWidth = 320
+
+        // Crea un objeto Canvas para dibujar en la imagen original
+        // Suponiendo que "bitmap" es el Bitmap que se desea hacer mutable
+        // Suponiendo que "bitmap" es el Bitmap que se desea hacer mutable
+        val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+
+
+        val canvas = Canvas(mutableBitmap)
+
+        // Crea un objeto Paint para dibujar las cajas delimitadoras y etiquetas
+        val paint = Paint()
+        paint.color = Color.RED
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 4f
+        paint.textSize = 12f
+
+        // Procesa las coordenadas de las cajas delimitadoras y las etiquetas
+        for (i in 0 until numDetections) {
+            val offset = i * 4
+            val x = result[offset] * inputWidth
+            val y = result[offset + 1] * inputHeight
+            val width = result[offset + 2] * inputWidth - x
+            val height = result[offset + 3] * inputHeight - y
+
+            // Obtiene la etiqueta correspondiente a este objeto
+            val labelIndex = result[i * 5 + 4].toInt()
+            val label = labels[labelIndex]
+            Log.d("MODEL", ""+ label)
+            // Dibuja la caja delimitadora en la imagen
+            canvas.drawRect(x, y, x + width, y + height, paint)
+
+            // Dibuja la etiqueta junto a la caja delimitadora
+            canvas.drawText("$label: ${(result[i * 5] * 100).toInt()}%", x, y - 10, paint)
+        }
+
+        // Muestra la imagen resultante en una vista de imagen
+
+        //imageView.setImageBitmap(mutableBitmap)
+        imageView?.setImageBitmap(mutableBitmap)
+        Handler().postDelayed({
+            imageView?.setImageBitmap(null)
+        }, 5000)
 
     }
+ */
+    private fun saveImageToExternalStorage(bitmap: Bitmap): Boolean {
+        val imageFileName = "IMG_${System.currentTimeMillis()}.jpg"
+        val storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES)
 
+        val imageFile = File(storageDir, imageFileName)
+        val outputStream = FileOutputStream(imageFile)
+        return try {
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream)
+            outputStream.flush()
+            outputStream.close()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
 
 
 

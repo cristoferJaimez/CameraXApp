@@ -59,7 +59,11 @@ dependencies {
     implementation "androidx.camera:camera-view:${camerax_version}"
     implementation "androidx.camera:camera-extensions:${camerax_version}"
 
-    implementation('org.tensorflow:tensorflow-lite:2.11.0') { changing = true }
-    implementation('org.tensorflow:tensorflow-lite-gpu:2.11.0') { changing = true }
-    implementation('org.tensorflow:tensorflow-lite-support:0.4.3') { changing = true }
+    //implementation('org.tensorflow:tensorflow-lite:2.11.0') { changing = true }
+    //implementation('org.tensorflow:tensorflow-lite-gpu:2.11.0') { changing = true }
+    //implementation('org.tensorflow:tensorflow-lite-support:0.4.3') { changing = true }
+
+    // Otras dependencias PyTorch...
+    implementation 'org.pytorch:pytorch_android:1.13.0'
+    implementation 'org.pytorch:pytorch_android_torchvision:1.13.0'
 }
